@@ -11,8 +11,8 @@ NOTION_HEADERS = {
     "Accept": "application/json",
     "User-Agent": "Mozilla/5.0 (notion-reader)",
 }
-MAX_RETRIES = 5
-RETRY_BACKOFF_SECONDS = 0.5
+MAX_RETRIES = 8
+MAX_BACKOFF_SECONDS = 10.0
 
 
 def notion_post(
@@ -25,7 +25,8 @@ def notion_post(
                 endpoint_url, headers=NOTION_HEADERS, json=json_payload
             )
             # Notion's public API sporadically returns 502 MemcachedCrossCellError
-            # while routing requests across cells; retrying usually succeeds.
+            # in waves that last 30+ seconds. Back off generously so a single
+            # CLI invocation can ride one out instead of failing the user.
             if response.status_code >= 500:
                 last_error = httpx.HTTPStatusError(
                     f"{response.status_code} from {endpoint_url}: {response.text[:200]}",
@@ -37,7 +38,8 @@ def notion_post(
                 return response.json()
         except httpx.HTTPError as transport_error:
             last_error = transport_error
-        time.sleep(RETRY_BACKOFF_SECONDS * (attempt_index + 1))
+        if attempt_index < MAX_RETRIES - 1:
+            time.sleep(min(2.0 * (attempt_index + 1), MAX_BACKOFF_SECONDS))
     assert last_error is not None
     raise last_error
 
@@ -59,19 +61,19 @@ def resolve_page_and_space(
     hostname = parsed_url.hostname or ""
     path = unquote(parsed_url.path or "/")
 
-    # Direct page id in path (last 32 hex chars, possibly with dashes)
+    # If the URL itself contains a 32-char page id, skip the spaceDomain
+    # lookup entirely. loadCachedPageChunkV2 only needs the page id, and
+    # the spaceId surfaces in its response (used later for syncRecordValues).
     hex_only_path = re.sub(r"[^0-9a-fA-F]", "", path)
     direct_match = re.search(r"([0-9a-fA-F]{32})$", hex_only_path)
-    direct_page_id: str | None = None
     if direct_match:
         raw_id = direct_match.group(1).lower()
-        direct_page_id = (
-            f"{raw_id[0:8]}-{raw_id[8:12]}-{raw_id[12:16]}-{raw_id[16:20]}-{raw_id[20:32]}"
+        return (
+            f"{raw_id[0:8]}-{raw_id[8:12]}-{raw_id[12:16]}-{raw_id[16:20]}-{raw_id[20:32]}",
+            None,
         )
 
     if not hostname.endswith(".notion.site"):
-        if direct_page_id:
-            return direct_page_id, None
         raise ValueError(
             f"Cannot resolve page id from URL: {target_url!r}. "
             "Expected a *.notion.site host or a URL ending in a 32-char page id."
@@ -85,9 +87,6 @@ def resolve_page_and_space(
         {"spaceDomain": space_subdomain},
     )
     space_id = space_lookup_data["spaceId"]
-
-    if direct_page_id:
-        return direct_page_id, space_id
 
     space_details_data = notion_post(
         http_client,
@@ -128,6 +127,10 @@ def fetch_all_blocks(
             block_value = block_record.get("value", {}).get("value")
             if block_value:
                 accumulated_blocks[block_id] = block_value
+            if space_id is None:
+                space_id = block_record.get("spaceId") or (
+                    block_value.get("space_id") if block_value else None
+                )
 
         response_cursors = chunk_data.get("cursors") or []
         next_cursor = response_cursors[0] if response_cursors else None

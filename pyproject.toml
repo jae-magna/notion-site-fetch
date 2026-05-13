@@ -1,6 +1,6 @@
 [project]
 name = "notion-site-fetch"
-version = "0.1.0"
+version = "0.1.1"
 description = "Fetch any public Notion page and print it as Markdown — no token, no headless browser."
 readme = "README.md"
 license = "MIT"
