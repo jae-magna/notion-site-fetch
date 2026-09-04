@@ -156,7 +156,7 @@ def fetch_all_blocks(
             batch_ids = list(missing_block_ids)[batch_start : batch_start + 100]
             sync_data = notion_post(
                 http_client,
-                "https://www.notion.so/api/v3/syncRecordValues",
+                f"{api_base}/syncRecordValues",
                 {
                     "requests": [
                         {
