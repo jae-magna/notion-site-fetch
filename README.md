@@ -66,11 +66,13 @@ even without a `.notion.site` host.
 
 ### What gets rendered
 
-Headings (H1–H4), paragraphs, bold/italic/strikethrough/code inline
+Headings (H1–H5), paragraphs, bold/italic/strikethrough/code inline
 formatting, links, bulleted/numbered/to-do/toggle lists with nesting,
 quotes, callouts (as blockquotes), dividers, code blocks (with
 language), images, bookmarks, video/file/PDF/audio embeds (as links),
-and inline equations.
+and inline/display equations. Notion-escaped TeX is decoded for Markdown math
+renderers; attachment images use public Notion image URLs (no expiring signed
+URLs are saved).
 
 Things that are deliberately skipped or simplified: table-of-contents
 and breadcrumb blocks (Markdown renderers generate their own),
@@ -83,6 +85,10 @@ expose row-level data to anonymous viewers).
 Notion's public sites are served as an empty React shell and hydrated
 by client-side calls to three internal endpoints:
 
+For URLs without a page id, the HTML bootstrap page id is tried first. This
+also handles published sites with no `publicHomePage` in their space metadata.
+If that metadata is absent, the existing space lookup is used:
+
 1. `POST /api/v3/getPublicPageData` with `{"spaceDomain": "<sub>"}`
    resolves a `*.notion.site` subdomain to a `spaceId`.
 2. `POST /api/v3/getPublicSpaceData` with that `spaceId` returns the
@@ -94,6 +100,15 @@ by client-side calls to three internal endpoints:
 All endpoints are unauthenticated and return JSON. The tool issues
 these requests against the site's own subdomain (`*.notion.site`) where
 possible to avoid Notion's cross-cell routing errors on `www.notion.so`.
+
+## Tests
+
+```sh
+uv run python -m unittest -v
+```
+
+The tests use in-memory blocks and mocked HTTP responses, with no login or
+network access required.
 
 ## License
 

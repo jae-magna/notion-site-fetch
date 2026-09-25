@@ -1,7 +1,7 @@
 import re
 import sys
 import time
-from urllib.parse import unquote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 import httpx
 
@@ -78,6 +78,17 @@ def resolve_page_and_space(
             f"Cannot resolve page id from URL: {target_url!r}. "
             "Expected a *.notion.site host or a URL ending in a 32-char page id."
         )
+
+    # Published sites can expose a page without publicHomePage being set.
+    # The HTML bootstrap carries the same page id used by the web client.
+    page_response = http_client.get(target_url)
+    page_response.raise_for_status()
+    bootstrap_match = re.search(
+        r'"requiredRedirectMetadata",\s*\{[^}]*"pageId"\s*:\s*"([0-9a-f-]{36})"',
+        page_response.text,
+    )
+    if bootstrap_match:
+        return bootstrap_match.group(1), None
 
     space_subdomain = hostname.split(".")[0]
 
@@ -184,6 +195,16 @@ def fetch_all_blocks(
     return accumulated_blocks
 
 
+def render_equation(expression: str) -> str:
+    # Notion stores TeX with an extra escaping layer (including literal \n).
+    # Decode one layer only: a TeX matrix row break must remain two slashes.
+    return re.sub(
+        r"\\(\\|n(?![a-zA-Z]))",
+        lambda match: "\n" if match[1] == "n" else "\\",
+        expression,
+    )
+
+
 def render_rich_text(rich_text_runs) -> str:
     if not rich_text_runs:
         return ""
@@ -207,6 +228,8 @@ def render_rich_text(rich_text_runs) -> str:
                 is_strikethrough = True
             elif tag == "c":
                 is_code = True
+            elif tag == "e" and len(decoration) > 1:
+                plain_text = f"${render_equation(decoration[1])}$"
             elif tag == "a" and len(decoration) > 1:
                 link_url = decoration[1]
         styled_text = plain_text
@@ -253,6 +276,9 @@ def render_block_lines(
     elif block_type == "sub_sub_header":
         output_lines.append(f"{indent_prefix}#### {rendered_title}")
         output_lines.append("")
+    elif block_type == "header_4":
+        output_lines.append(f"{indent_prefix}##### {rendered_title}")
+        output_lines.append("")
     elif block_type == "text":
         output_lines.append(f"{indent_prefix}{rendered_title}")
         output_lines.append("")
@@ -291,6 +317,11 @@ def render_block_lines(
         image_caption_runs = (block_value.get("properties") or {}).get("caption") or []
         image_url = render_rich_text(image_source_runs)
         image_caption = render_rich_text(image_caption_runs)
+        if image_url.startswith("attachment:"):
+            image_url = (
+                "https://www.notion.so/image/"
+                f"{quote(image_url, safe='')}?table=block&id={block_id}&cache=v2"
+            )
         if image_url:
             output_lines.append(f"{indent_prefix}![{image_caption}]({image_url})")
             output_lines.append("")
@@ -303,10 +334,14 @@ def render_block_lines(
             output_lines.append(f"{indent_prefix}[{rendered_title or link_url}]({link_url})")
             output_lines.append("")
     elif block_type == "equation":
-        equation_expression = render_rich_text(
-            (block_value.get("properties") or {}).get("title") or []
+        equation_expression = render_equation(
+            "".join(run[0] for run in title_rich_text if run)
         )
-        output_lines.append(f"{indent_prefix}$${equation_expression}$$")
+        output_lines.append(f"{indent_prefix}$$")
+        output_lines.extend(
+            f"{indent_prefix}{line}" for line in equation_expression.splitlines()
+        )
+        output_lines.append(f"{indent_prefix}$$")
         output_lines.append("")
     elif block_type in ("column_list", "column"):
         pass
