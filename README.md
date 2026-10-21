@@ -98,7 +98,3 @@ possible to avoid Notion's cross-cell routing errors on `www.notion.so`.
 ## License
 
 MIT — see [`LICENSE`](./LICENSE).
-
-## Acknowledgments
-
-Development of this fork has been carried out with assistance from OpenAI's ChatGPT, including code development, debugging, and reviewing potential improvements. All changes are reviewed by the project maintainer.
